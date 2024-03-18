@@ -1,9 +1,8 @@
 import boto3
 import argparse
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from botocore.exceptions import NoCredentialsError
-import pytz
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='Prune S3 deployments.')
@@ -61,23 +60,25 @@ def save_deployments(directory_list, num_deployments):
         print(f'Object: {deployments["name"]}, Last modified: {deployments["last_modified"]}')
 
 def prune_num_deployments(bucket, directory_list, num_deployments):
+    save_deployments(directory_list, args.num_deployments)
     print(f'-----------PRUNING---------------')
     # prune objects that are beyond the num_deployments limit
     for deployments in directory_list[num_deployments:]:
         print(f'Pruning object: {deployments["name"]}, Last modified: {deployments["last_modified"]}')
-
         bucket.objects.filter(Prefix=deployments["name"]).delete()
 
 def prune_days_older_than_deployments(bucket, directory_list, prune_older_than_days, keep_min_deployments):
-    # Get timestamp from prune_older_than_days
-    cutoff_time = pytz.utc.localize(datetime.now() - timedelta(days=prune_older_than_days))
 
-    print(f'-----------PRUNING OLDER THAN {prune_older_than_days} DAYS---------------')
+    # Get timestamp for the cutoff date
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=prune_older_than_days)
 
-    # Get a list of deployments outside of the minimum number of deployments
+    # Get a list of deployments beyond the minimum number of deployments to keep constraint
     for deployments in directory_list[keep_min_deployments:]:
+        time_left = int((deployments["last_modified"]-cutoff_date).days)
+
         # Prune objects that are older than the cutoff time
-        if deployments["last_modified"] > cutoff_time:
+        if time_left < 0:
+            print(f'-----------PRUNING OLDER THAN {prune_older_than_days} DAYS---------------')
             print(f'Pruning object: {deployments["name"]}, Last modified: {deployments["last_modified"]}')
             bucket.objects.filter(Prefix=deployments["name"]).delete()
 
@@ -97,5 +98,4 @@ def prune_deployments(bucket, directory_list, num_deployments=None, prune_older_
 
 # Use the functions to get the sorted deployment timestamps, save the deployments, and prune the deployments
 directory_list = get_sorted_deployment_timestamps(auth_to_bucket(args.bucket_name, args.access_key, args.secret_key))
-save_deployments(directory_list, args.num_deployments)
 prune_deployments(auth_to_bucket(args.bucket_name, args.access_key, args.secret_key), directory_list, args.num_deployments, args.prune_older_than_days, args.keep_min_deployments)
